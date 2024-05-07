@@ -6,7 +6,7 @@ Because UTM is a sand-boxed Mac app, there are a few extra steps needed for a pr
 
 Make sure you perform a recursive clone to get all the submodules:
 ```sh
-git clone --recursive https://github.com/utmapp/UTM.git
+git clone --recursive https://github.com/epaproditus/UTM.git
 ```
 
 Alternatively, run the following after cloning if you did not do a recursive clone.
