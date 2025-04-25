@@ -16,7 +16,9 @@ git submodule update --init --recursive
 
 ## Dependencies
 
-The easy way is to get the prebuilt dependences from [GitHub Actions][1]. Pick the latest release and download all of the `Sysroot-macos-*` artifacts. You need to be logged in to GitHub to download artifacts. If you only intend to run locally, it is alright to just download the sysroot for your architecture.
+The easy way is to get the prebuilt dependencies from [GitHub Actions][1]. Pick the latest release and download all of the `Sysroot-macos-*` artifacts. You need to be logged in to GitHub to download artifacts. If you only intend to run locally, it is alright to just download the sysroot for your architecture. After downloading the prebuilt artifacts of your choice, extract them to the root directory where you cloned the repository.
+
+To build UTM, make sure you have the latest version of Xcode installed.
 
 ### Building Dependencies (Advanced)
 
@@ -58,7 +60,7 @@ If you are developing QEMU and wish to pass in a custom path to QEMU, you can us
 You can build UTM with the script:
 
 ```sh
-./scripts/build_utm.sh -t TEAMID -p macos -a ARCH -o /path/to/output/directory
+./scripts/build_utm.sh -t TEAMID -k macosx -s macOS -a ARCH -o /path/to/output/directory
 ```
 
 `ARCH` can be `x86_64` or `arm64` or `"arm64 x86_64"` (quotes are required) for a universal binary. The built artifact is an unsigned `.xcarchive` which you can use with the package tool (see below).
@@ -74,6 +76,7 @@ Artifacts built with `build_utm.sh` (includes GitHub Actions artifacts) must be 
 ```sh
 ./scripts/package_mac.sh unsigned /path/to/UTM.xcarchive /path/to/output
 ```
+where `/path/to/output` is an existing directory.
 
 This builds `UTM.dmg` in `/path/to/output` which can be installed to `/Applications`.
 
@@ -82,6 +85,7 @@ This builds `UTM.dmg` in `/path/to/output` which can be installed to `/Applicati
 ```sh
 ./scripts/package_mac.sh developer-id /path/to/UTM.xcarchive /path/to/output TEAM_ID PROFILE_UUID HELPER_PROFILE_UUID LAUNCHER_PROFILE_UUID
 ```
+where `/path/to/output` is an existing directory.
 
 To build a signed package, you need to be a registered Apple Developer. From the developer portal, create a certificate for "Developer ID Application" (and install it into your Keychain). Also create three provisioning profiles with that certificate with Hypervisor entitlements (you need to manually request these entitlements and be approved by Apple) for UTM, QEMUHelper, and QEMULauncher. `TEAM_ID` should be the same as in the certificate, `PROFILE_UUID` should be the UUID of the profile installed by Xcode (open the profile in Xcode), and `HELPER_PROFILE_UUID` is the UUID of a separate profile for the XPC helper. `LAUNCHER_PROFILE_UUID` is the UUID of a profile for the launcher.
 

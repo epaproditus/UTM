@@ -59,6 +59,17 @@ enum VMBootDevice: Int, Identifiable {
     case kernel
 }
 
+struct AlertMessage: Identifiable {
+    var message: String
+    public var id: String {
+        message
+    }
+
+    init(_ message: String) {
+        self.message = message
+    }
+}
+
 @MainActor class VMWizardState: ObservableObject {
     let bytesInMib = 1048576
     let bytesInGib = 1073741824
@@ -135,6 +146,7 @@ enum VMBootDevice: Int, Identifiable {
     @Published var sharingReadOnly: Bool = false
     @Published var name: String?
     @Published var isOpenSettingsAfterCreation: Bool = false
+    @Published var useNvmeAsDiskInterface = false
     
     /// SwiftUI BUG: on macOS 12, when VoiceOver is enabled and isBusy changes the disable state of a button being clicked, 
     var isNeverDisabledWorkaround: Bool {
@@ -324,7 +336,6 @@ enum VMBootDevice: Int, Identifiable {
                 bootloader.linuxInitialRamdiskURL = linuxInitialRamdiskURL
                 bootloader.linuxCommandLine = linuxBootArguments
                 config.system.boot = bootloader
-                config.system.genericPlatform = UTMAppleConfigurationGenericPlatform()
                 if let linuxRootImageURL = linuxRootImageURL {
                     config.drives.append(UTMAppleConfigurationDrive(existingURL: linuxRootImageURL))
                     isSkipDiskCreate = true
@@ -332,6 +343,7 @@ enum VMBootDevice: Int, Identifiable {
             } else {
                 config.system.boot = try UTMAppleConfigurationBoot(for: .linux)
             }
+            config.system.genericPlatform = UTMAppleConfigurationGenericPlatform()
             config.virtualization.hasRosetta = linuxHasRosetta
             #endif
         case .Windows:
@@ -342,7 +354,11 @@ enum VMBootDevice: Int, Identifiable {
             }
         }
         if !isSkipDiskCreate {
-            config.drives.append(UTMAppleConfigurationDrive(newSize: storageSizeGib * bytesInGib / bytesInMib))
+            var newDisk = UTMAppleConfigurationDrive(newSize: storageSizeGib * bytesInGib / bytesInMib)
+            if #available(macOS 14, *), useNvmeAsDiskInterface {
+                newDisk.isNvme = true
+            }
+            config.drives.append(newDisk)
         }
         if #available(macOS 12, *), let sharingDirectoryURL = sharingDirectoryURL {
             config.sharedDirectories = [UTMAppleConfigurationSharedDirectory(directoryURL: sharingDirectoryURL, isReadOnly: sharingReadOnly)]

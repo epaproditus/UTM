@@ -16,11 +16,12 @@
 
 import SwiftUI
 
-private let kTimeoutSeconds: UInt64 = 15
+private let kTimeoutSeconds: UInt64 = 60
 
 struct UTMRemoteConnectView: View {
     @ObservedObject var remoteClientState: UTMRemoteClient.State
     @Environment(\.openURL) private var openURL
+    @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var data: UTMRemoteData
     @State private var selectedServer: UTMRemoteClient.State.SavedServer?
     @State private var isAutoConnect: Bool = false
@@ -32,7 +33,9 @@ struct UTMRemoteConnectView: View {
     var body: some View {
         VStack {
             HStack {
-                ProgressView().progressViewStyle(.circular)
+                if remoteClientState.isScanning {
+                    ProgressView().progressViewStyle(.circular)
+                }
                 Spacer()
                 Text("Select a UTM Server")
                     .font(.headline)
@@ -96,10 +99,23 @@ struct UTMRemoteConnectView: View {
                 }
             }.listStyle(.insetGrouped)
         }.alert(item: $remoteClientState.alertMessage) { item in
-            Alert(title: Text(item.message))
+            Alert(title: Text(item.message), primaryButton: .default(Text("Open Settings")) {
+                UIApplication.shared.open(URL(string: UIApplication.openSettingsURLString)!)
+            }, secondaryButton: .cancel(Text("Retry")) {
+                if !remoteClientState.isScanning {
+                    Task {
+                        await remoteClient.startScanning()
+                    }
+                }
+            })
         }
         .sheet(item: $selectedServer) { server in
-            ServerConnectView(remoteClientState: remoteClientState, server: server, isAutoConnect: $isAutoConnect)
+            if #available(iOS 15, *) {
+                ServerConnectView(remoteClientState: remoteClientState, server: server, isAutoConnect: $isAutoConnect)
+            } else {
+                ServerConnectView(remoteClientState: remoteClientState, server: server, isAutoConnect: $isAutoConnect)
+                    .environmentObject(data)
+            }
         }
         .onAppear {
             Task {
@@ -109,6 +125,13 @@ struct UTMRemoteConnectView: View {
         .onDisappear {
             Task {
                 await remoteClient.stopScanning()
+            }
+        }
+        .onChange(of: scenePhase) { newValue in
+            if newValue == .active && !remoteClientState.isScanning {
+                Task {
+                    await remoteClient.startScanning()
+                }
             }
         }
     }
@@ -254,28 +277,38 @@ private struct ServerConnectView: View {
                 connectionTask?.cancel()
                 remoteClientState.showErrorAlert(NSLocalizedString("Timed out trying to connect.", comment: "UTMRemoteConnectView"))
             }
-            do {
-                try await remoteClient.connect(server)
-            } catch {
-                if case UTMRemoteClient.ConnectionError.passwordRequired = error {
-                    withAnimation {
-                        isPasswordRequired = true
-                        isTrustButton = false
-                    }
-                } else if case UTMRemoteClient.ConnectionError.fingerprintUntrusted(let fingerprint) = error, server.fingerprint.isEmpty {
-                    withAnimation {
-                        server.fingerprint = fingerprint
-                        isTrustButton = true
-                    }
-                    remoteClientState.showErrorAlert(error.localizedDescription)
-                } else if error is CancellationError {
-                    // ignore it
-                } else {
-                    remoteClientState.showErrorAlert(error.localizedDescription)
+            if #available(iOS 15, *) {
+                await _connect()
+            } else {
+                Task(priority: .userInteractive) {
+                    await _connect()
                 }
             }
             timeoutTask.cancel()
             connectionTask = nil
+        }
+    }
+
+    private func _connect() async {
+        do {
+            try await remoteClient.connect(server)
+        } catch {
+            if case UTMRemoteClient.ConnectionError.passwordRequired = error {
+                withAnimation {
+                    isPasswordRequired = true
+                    isTrustButton = false
+                }
+            } else if case UTMRemoteClient.ConnectionError.fingerprintUntrusted(let fingerprint) = error, server.fingerprint.isEmpty {
+                withAnimation {
+                    server.fingerprint = fingerprint
+                    isTrustButton = true
+                }
+                remoteClientState.showErrorAlert(error.localizedDescription)
+            } else if error is CancellationError {
+                // ignore it
+            } else {
+                remoteClientState.showErrorAlert(error.localizedDescription)
+            }
         }
     }
 }

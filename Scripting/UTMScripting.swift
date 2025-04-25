@@ -132,6 +132,12 @@ import ScriptingBridge
     case udp = 0x55645070 /* 'UdPp' */
 }
 
+// MARK: UTMScriptingQemuScaler
+@objc public enum UTMScriptingQemuScaler : AEKeyword {
+    case linear = 0x51734c69 /* 'QsLi' */
+    case nearest = 0x51734e65 /* 'QsNe' */
+}
+
 // MARK: UTMScriptingAppleNetworkMode
 @objc public enum UTMScriptingAppleNetworkMode : AEKeyword {
     case shared = 0x53685264 /* 'ShRd' */
@@ -159,6 +165,7 @@ import ScriptingBridge
     @objc optional func print(_ x: Any!, withProperties: [AnyHashable : Any]!, printDialog: Bool) // Print a document.
     @objc optional func quitSaving(_ saving: UTMScriptingSaveOptions) // Quit the application.
     @objc optional func exists(_ x: Any!) -> Bool // Verify that an object exists.
+    @objc optional func importNew(_ new_: NSNumber!, from: URL!) -> SBObject // Import a new virtual machine from a file.
     @objc optional func virtualMachines() -> SBElementArray
     @objc optional var autoTerminate: Bool { get } // Auto terminate the application when all windows are closed?
     @objc optional func setAutoTerminate(_ autoTerminate: Bool) // Auto terminate the application when all windows are closed?
@@ -208,6 +215,7 @@ extension SBObject: UTMScriptingWindow {}
     @objc optional func stopBy(_ by: UTMScriptingStopMethod) // Shuts down a running virtual machine.
     @objc optional func delete() // Delete a virtual machine. All data will be deleted, there is no confirmation!
     @objc optional func duplicateWithProperties(_ withProperties: [AnyHashable : Any]!) // Copy an virtual machine and all its data.
+    @objc optional func exportTo(_ to: URL!) // Export a virtual machine to a specified location.
     @objc optional func openFileAt(_ at: String!, for for_: UTMScriptingOpenMode, updating: Bool) -> UTMScriptingGuestFile // Open a file on the guest. You must close the file when you are done to prevent leaking guest resources.
     @objc optional func executeAt(_ at: String!, withArguments: [String]!, withEnvironment: [String]!, usingInput: String!, base64Encoding: Bool, outputCapturing: Bool) -> UTMScriptingGuestProcess // Execute a command or script on the guest.
     @objc optional func queryIp() -> [Any] // Query the guest for all IP addresses on its network interfaces (excluding loopback).

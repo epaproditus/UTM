@@ -19,6 +19,7 @@ import UniformTypeIdentifiers
 #if os(iOS)
 import IQKeyboardManagerSwift
 #endif
+import TipKit
 
 // on visionOS, there is no text to show more than UTM
 #if WITH_QEMU_TCI && !os(visionOS)
@@ -33,9 +34,7 @@ struct ContentView: View {
     @State private var editMode = false
     @EnvironmentObject private var data: UTMData
     @StateObject private var releaseHelper = UTMReleaseHelper()
-    @State private var newPopupPresented = false
     @State private var openSheetPresented = false
-    @State private var alertItem: AlertItem?
     @Environment(\.openURL) var openURL
     @AppStorage("ServerAutostart") private var isServerAutostart: Bool = false
 
@@ -48,17 +47,12 @@ struct ContentView: View {
         .disabled(data.busy && !data.showNewVMSheet && !data.showSettingsModal)
         .sheet(isPresented: $releaseHelper.isReleaseNotesShown, onDismiss: {
             releaseHelper.closeReleaseNotes()
+            if #available(iOS 17, macOS 14, *) {
+                UTMTipCreateVM.isVMListEmpty = data.virtualMachines.count == 0
+            }
         }, content: {
             VMReleaseNotesView(helper: releaseHelper).padding()
         })
-        .alert(item: $alertItem) { item in
-            switch item {
-            case .downloadUrl(let url):
-                return Alert(title: Text("Download VM"), message: Text("Do you want to download '\(url)'?"), primaryButton: .cancel(), secondaryButton: .default(Text("Download")) {
-                    data.downloadUTMZip(from: url)
-                })
-            }
-        }
         .onReceive(NSNotification.ShowReleaseNotes) { _ in
             Task {
                 await releaseHelper.fetchReleaseNotes(force: true)
@@ -80,14 +74,18 @@ struct ContentView: View {
         .onAppear {
             Task {
                 await data.listRefresh()
+                await releaseHelper.fetchReleaseNotes()
+                if #available(iOS 17, macOS 14, *) {
+                    if !releaseHelper.isReleaseNotesShown {
+                        UTMTipCreateVM.isVMListEmpty = data.virtualMachines.count == 0
+                        UTMTipDonate.timesLaunched += 1
+                    }
+                }
                 #if os(macOS)
                 if isServerAutostart {
                     await data.remoteServer.start()
                 }
                 #endif
-            }
-            Task {
-                await releaseHelper.fetchReleaseNotes()
             }
             #if os(macOS)
             NSWindow.allowsAutomaticWindowTabbing = false
@@ -121,6 +119,17 @@ struct ContentView: View {
             #endif
             #endif
         }
+        #if WITH_SERVER
+        .onChange(of: isServerAutostart) { newValue in
+            if newValue {
+                Task {
+                    if isServerAutostart && !data.remoteServer.state.isServerActive {
+                        await data.remoteServer.start()
+                    }
+                }
+            }
+        }
+        #endif
     }
     
     private func handleURL(url: URL) {
@@ -129,8 +138,9 @@ struct ContentView: View {
            components.host == "downloadVM",
            let urlParameter = components.queryItems?.first(where: { $0.name == "url" })?.value,
            let url = URL(string: urlParameter) {
-            if alertItem == nil {
-                alertItem = .downloadUrl(url)
+            if data.alertItem == nil {
+                data.showNewVMSheet = false
+                data.alertItem = .downloadUrl(url)
             }
         } else if url.isFileURL {
             data.busyWorkAsync {
@@ -192,19 +202,6 @@ extension ContentView: DropDelegate {
         group.wait()
 
         return validURLs
-    }
-}
-
-extension ContentView {
-    private enum AlertItem: Identifiable {
-        case downloadUrl(URL)
-
-        var id: Int {
-            switch self {
-            case .downloadUrl(let url):
-                return url.hashValue
-            }
-        }
     }
 }
 

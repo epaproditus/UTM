@@ -15,8 +15,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/utmapp/CocoaSpice.git",
       "state" : {
-        "branch" : "visionos",
-        "revision" : "9fd682e0f78c884036609d4a19db2cfb3ed50c33"
+        "branch" : "main",
+        "revision" : "bbcc6371874fee17ac620176b9680393fc9a18ac"
       }
     },
     {
@@ -52,7 +52,7 @@
       "location" : "https://github.com/utmapp/QEMUKit.git",
       "state" : {
         "branch" : "main",
-        "revision" : "1019ed76278a1d5cbe871ff5e51c62b5d8c9a032"
+        "revision" : "6ddf970edaacf708aaf4483d153621921cbf737f"
       }
     },
     {
@@ -79,7 +79,7 @@
       "location" : "https://github.com/utmapp/SwiftConnect",
       "state" : {
         "branch" : "main",
-        "revision" : "af855e47ca222da163cc7f4f185230f36ba8694a"
+        "revision" : "c193f74b804e50deae2f5c036b50c96d66b71fe0"
       }
     },
     {
@@ -88,7 +88,7 @@
       "location" : "https://github.com/osy/SwiftCopyfile.git",
       "state" : {
         "branch" : "main",
-        "revision" : "4da383bceaa5a5aec0ceb5789eed9bef2fa93f26"
+        "revision" : "8495d5eed20daf1e0bb45f9d949f54275a587d66"
       }
     },
     {

@@ -50,7 +50,15 @@ actor UTMRemoteClient {
 
     func startScanning() {
         scanTask = Task {
+            await MainActor.run {
+                state.isScanning = true
+            }
             await withErrorAlert {
+                defer {
+                    Task { @MainActor in
+                        state.isScanning = false
+                    }
+                }
                 for try await results in Connection.browse(forServiceType: service) {
                     await self.didFindResults(results)
                 }
@@ -583,6 +591,15 @@ extension UTMRemoteClient {
             case .versionMismatch:
                 return NSLocalizedString("The server interface version does not match the client.", comment: "UTMRemoteClient")
             }
+        }
+    }
+}
+
+extension Connection.ConnectionError: @retroactive LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .localNetworkDenied:
+            return NSLocalizedString("Please allow this app to access your local network when prompted or in Settings.", comment: "UTMRemoteClient")
         }
     }
 }

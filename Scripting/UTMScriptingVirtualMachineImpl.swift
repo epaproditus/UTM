@@ -90,6 +90,12 @@ class UTMScriptingVirtualMachineImpl: NSObject, UTMScriptable {
         }
     }
     
+    var qemuProcess: UTMQemuSystem? {
+        get async {
+            await (vm as? UTMQemuVirtualMachine)?.system
+        }
+    }
+    
     override var objectSpecifier: NSScriptObjectSpecifier? {
         let appDescription = NSApplication.classDescription() as! NSScriptClassDescription
         return NSUniqueIDSpecifier(containerClassDescription: appDescription,
@@ -178,6 +184,16 @@ class UTMScriptingVirtualMachineImpl: NSObject, UTMScriptable {
                 try wrapper.updateConfiguration(from: newConfiguration)
                 try await data.save(vm: newVM)
             }
+        }
+    }
+    
+    @objc func export(_ command: NSCloneCommand) {
+        let exportUrl = command.evaluatedArguments?["file"] as? URL
+        withScriptCommand(command) { [self] in
+            guard vm.state == .stopped else {
+                throw ScriptingError.notStopped
+            }
+            try await data.export(vm: box, to: exportUrl!)
         }
     }
 }

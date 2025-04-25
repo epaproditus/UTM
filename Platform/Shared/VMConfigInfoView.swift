@@ -125,6 +125,9 @@ struct VMConfigInfoView: View {
             #if os(macOS)
             VStack {
                 IconPreview(url: config.iconURL)
+                    .onTapGesture {
+                        imageSelectVisible.toggle()
+                    }
                 Button(action: { imageSelectVisible.toggle() }, label: {
                     Text("Choose")
                 }).fileImporter(isPresented: $imageSelectVisible, allowedContentTypes: [.image]) { result in
@@ -148,6 +151,9 @@ struct VMConfigInfoView: View {
             #if os(macOS)
             VStack {
                 IconPreview(url: config.iconURL)
+                    .onTapGesture {
+                        imageSelectVisible.toggle()
+                    }
                 Button(action: { imageSelectVisible.toggle() }, label: {
                     Text("Choose")
                 }).popover(isPresented: $imageSelectVisible, arrowEdge: .bottom) {
@@ -259,11 +265,12 @@ private struct IconSelect: View {
         LazyVGrid(columns: gridLayout, spacing: 0) {
             ForEach(icons, id: \.self) { icon in
                 Button(action: { onIconSelected(icon) }, label: {
-                    VStack {
+                    VStack(alignment: .center) {
                         Logo(logo: PlatformImage(contentsOfURL: icon))
                         Text(iconToTitle(icon))
-                            .lineLimit(2)
+                            .lineLimit(2, optionalReservesSpace: true)
                             .font(.footnote)
+                            .multilineTextAlignment(.center)
                     }
                     .padding(8)
                     .frame(width: iconGridSize, height: iconGridSize)
@@ -274,6 +281,17 @@ private struct IconSelect: View {
                 }).buttonStyle(.plain)
             }
         }.modifier(IconSelectModifier())
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func lineLimit(_ limit: Int, optionalReservesSpace: Bool) -> some View {
+        if #available(macOS 13, iOS 16, *) {
+            self.lineLimit(limit, reservesSpace: optionalReservesSpace)
+        } else {
+            self.lineLimit(limit)
+        }
     }
 }
 
@@ -365,4 +383,5 @@ private let ICON_TITLE_MAP: [String: LocalizedStringKey] = [
     "xbox": "Xbox",
     "xubuntu": "Xubuntu",
     "yunos": "YunOS",
+    "pardus": "Pardus"
 ]

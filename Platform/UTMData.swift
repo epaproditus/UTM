@@ -36,14 +36,17 @@ typealias ConcreteVirtualMachine = UTMRemoteSpiceVirtualMachine
 typealias ConcreteVirtualMachine = UTMQemuVirtualMachine
 #endif
 
-struct AlertMessage: Identifiable {
-    var message: String
-    public var id: String {
-        message
-    }
-    
-    init(_ message: String) {
-        self.message = message
+enum AlertItem: Identifiable {
+    case message(String)
+    case downloadUrl(URL)
+
+    var id: Int {
+        switch self {
+        case .downloadUrl(let url):
+            return url.hashValue
+        case .message(let message):
+            return message.hashValue
+        }
     }
 }
 
@@ -61,8 +64,8 @@ struct AlertMessage: Identifiable {
     @Published var showNewVMSheet: Bool
     
     /// View: show an alert message
-    @Published var alertMessage: AlertMessage?
-    
+    @Published var alertItem: AlertItem?
+
     /// View: show busy spinner
     @Published var busy: Bool
     
@@ -398,7 +401,7 @@ struct AlertMessage: Identifiable {
     }
     
     func showErrorAlert(message: String) {
-        alertMessage = AlertMessage(message)
+        alertItem = .message(message)
     }
     
     func newVM() {
@@ -470,7 +473,14 @@ struct AlertMessage: Identifiable {
             throw UTMDataError.virtualMachineAlreadyExists
         }
         let vm = try VMData(creatingFromConfig: config, destinationUrl: Self.defaultStorageUrl)
-        try await save(vm: vm)
+        do {
+            try await save(vm: vm)
+        } catch {
+            if isDirectoryEmpty(vm.pathUrl) {
+                try? fileManager.removeItem(at: vm.pathUrl)
+            }
+            throw error
+        }
         listAdd(vm: vm)
         listSelect(vm: vm)
         return vm
@@ -619,9 +629,13 @@ struct AlertMessage: Identifiable {
     /// - Parameter asShortcut: Create a shortcut rather than a copy
     func importUTM(from url: URL, asShortcut: Bool = true) async throws {
         guard url.isFileURL else { return }
-        _ = url.startAccessingSecurityScopedResource()
-        defer { url.stopAccessingSecurityScopedResource() }
-        
+        let isScopedAccess = url.startAccessingSecurityScopedResource()
+        defer {
+            if isScopedAccess {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
         logger.info("importing: \(url)")
         // attempt to turn temp URL to presistent bookmark early otherwise,
         // when stopAccessingSecurityScopedResource() is called, we lose access
@@ -666,6 +680,57 @@ struct AlertMessage: Identifiable {
         listAdd(vm: vm)
         listSelect(vm: vm)
     }
+    
+    /// Handles UTM file URLs similar to importUTM, with few differences
+    ///
+    /// Always creates new VM (no shortcuts)
+    /// Copies VM file with a unique name to default storage (to avoid duplicates)
+    /// Returns VM data Object (to access UUID)
+    /// - Parameter url: File URL to read from
+    func importNewUTM(from url: URL) async throws -> VMData {
+        guard url.isFileURL else {
+            throw UTMDataError.importFailed
+        }
+        let isScopedAccess = url.startAccessingSecurityScopedResource()
+        defer {
+            if isScopedAccess {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+        
+        logger.info("importing: \(url)")
+        // attempt to turn temp URL to presistent bookmark early otherwise,
+        // when stopAccessingSecurityScopedResource() is called, we lose access
+        let bookmark = try url.persistentBookmarkData()
+        let url = try URL(resolvingPersistentBookmarkData: bookmark)
+        
+        // get unique filename, for every import we create a new VM
+        let newUrl = UTMData.newImage(from: url, to: documentsURL)
+        let fileName = newUrl.lastPathComponent
+        // create destination name (default storage + file name)
+        let dest =  documentsURL.appendingPathComponent(fileName, isDirectory: true)
+        
+        // check if VM is valid
+        guard let _ = try? VMData(url: url) else {
+            throw UTMDataError.importFailed
+        }
+        
+        // Copy file to documents
+        let vm: VMData?
+        logger.info("copying to Documents")
+        try fileManager.copyItem(at: url, to: dest)
+        vm = try VMData(url: dest)
+        
+        guard let vm = vm else {
+            throw UTMDataError.importParseFailed
+        }
+
+        // Add vm to the list
+        listAdd(vm: vm)
+        listSelect(vm: vm)
+        
+        return vm
+    }
 
     private func copyItemWithCopyfile(at srcURL: URL, to dstURL: URL) async throws {
         let totalSize = computeSize(recursiveFor: srcURL)
@@ -689,7 +754,21 @@ struct AlertMessage: Identifiable {
             }
         }
     }
-    
+
+    private func isDirectoryEmpty(_ pathURL: URL) -> Bool {
+        guard let enumerator = fileManager.enumerator(at: pathURL, includingPropertiesForKeys: [.isDirectoryKey]) else {
+            return false
+        }
+        for case let itemURL as URL in enumerator {
+            let isDirectory = (try? itemURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+            if !isDirectory {
+                return false
+            }
+        }
+        // if we get here, we only found empty directories
+        return true
+    }
+
     // MARK: - Downloading VMs
     
     #if os(macOS) && arch(arm64)
@@ -736,11 +815,8 @@ struct AlertMessage: Identifiable {
             listRemove(pendingVM: task.pendingVM)
         }
     }
-    
-    func mountSupportTools(for vm: any UTMVirtualMachine) async throws {
-        guard let vm = vm as? any UTMSpiceVirtualMachine else {
-            throw UTMDataError.unsupportedBackend
-        }
+
+    private func mountWindowsSupportTools(for vm: any UTMSpiceVirtualMachine) async throws {
         let task = UTMDownloadSupportToolsTask(for: vm)
         if await task.hasExistingSupportTools {
             vm.config.qemu.isGuestToolsInstallRequested = false
@@ -757,6 +833,40 @@ struct AlertMessage: Identifiable {
                 listRemove(pendingVM: task.pendingVM)
             }
         }
+    }
+
+    #if os(macOS)
+    @available(macOS 15, *)
+    private func mountMacSupportTools(for vm: UTMAppleVirtualMachine) async throws {
+        let task = UTMDownloadMacSupportToolsTask(for: vm)
+        if await task.hasExistingSupportTools {
+            vm.config.isGuestToolsInstallRequested = false
+            _ = try await task.mountTools()
+        } else {
+            listAdd(pendingVM: task.pendingVM)
+            Task {
+                do {
+                    _ = try await task.download()
+                } catch {
+                    showErrorAlert(message: error.localizedDescription)
+                }
+                vm.config.isGuestToolsInstallRequested = false
+                listRemove(pendingVM: task.pendingVM)
+            }
+        }
+    }
+    #endif
+
+    func mountSupportTools(for vm: any UTMVirtualMachine) async throws {
+        if let vm = vm as? any UTMSpiceVirtualMachine {
+            return try await mountWindowsSupportTools(for: vm)
+        }
+        #if os(macOS)
+        if #available(macOS 15, *), let vm = vm as? UTMAppleVirtualMachine, vm.config.system.boot.operatingSystem == .macOS {
+            return try await mountMacSupportTools(for: vm)
+        }
+        #endif
+        throw UTMDataError.unsupportedBackend
     }
     
     /// Cancel a download and discard any data
@@ -906,7 +1016,7 @@ struct AlertMessage: Identifiable {
             } catch {
                 logger.error("\(error)")
                 DispatchQueue.main.async {
-                    self.alertMessage = AlertMessage(error.localizedDescription)
+                    self.alertItem = .message(error.localizedDescription)
                 }
             }
         }

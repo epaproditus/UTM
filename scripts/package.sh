@@ -131,7 +131,7 @@ create_deb() {
 	local OUTPUT=$2
 	local FAKEENT=$3
 	local DEB_TMP="$OUTPUT/deb"
-	local IPA_PATH="$DEB_TMP/Library/Caches/com.utmapp.UTM"
+	local IPA_PATH="$DEB_TMP/var/tmp/com.utmapp.UTM"
 	local SIZE_KIB=`du -sk "$INPUT_APP"| cut -f 1`
 	local VERSION=`/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$INPUT_APP/Info.plist"`
 
@@ -142,8 +142,8 @@ cat >"$DEB_TMP/DEBIAN/control" <<EOL
 Package: com.utmapp.UTM
 Version: ${VERSION}
 Section: Productivity
-Architecture: iphoneos-arm
-Depends: firmware (>=14.0), firmware-sbin, net.angelxwind.appsyncunified
+Architecture: all
+Depends: firmware (>=14.0), net.angelxwind.appsyncunified
 Installed-Size: ${SIZE_KIB}
 Maintainer: osy <dev@getutm.app>
 Description: Virtual machines for iOS

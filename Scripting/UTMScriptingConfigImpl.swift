@@ -96,6 +96,7 @@ extension UTMScriptingConfigImpl {
     private func serializeQemuConfiguration(_ config: UTMQemuConfiguration) -> [AnyHashable : Any] {
         [
             "name": config.information.name,
+            "icon": config.information.iconURL?.deletingPathExtension().lastPathComponent ?? "",
             "notes": config.information.notes ?? "",
             "architecture": config.system.architecture.rawValue,
             "machine": config.system.target.rawValue,
@@ -107,6 +108,8 @@ extension UTMScriptingConfigImpl {
             "drives": config.drives.map({ serializeQemuDriveExisting($0) }),
             "networkInterfaces": config.networks.enumerated().map({ serializeQemuNetwork($1, index: $0) }),
             "serialPorts": config.serials.enumerated().map({ serializeQemuSerial($1, index: $0) }),
+            "displays": config.displays.map({ serializeQemuDisplay($0)}),
+            "qemuAdditionalArguments": config.qemu.additionalArguments.map({ serializeQemuAdditionalArgument($0)}),
         ]
     }
     
@@ -188,9 +191,40 @@ extension UTMScriptingConfigImpl {
         ]
     }
     
+    private func qemuScaler(from filter: QEMUScaler) -> UTMScriptingQemuScaler {
+        switch filter {
+        case .linear: return .linear
+        case .nearest: return .nearest
+        }
+    }
+    
+    private func serializeQemuDisplay(_ config: UTMQemuConfigurationDisplay) -> [AnyHashable : Any] {
+        [
+            "id": config.id.uuidString,
+            "hardware": config.hardware.rawValue,
+            "dynamicResolution": config.isDynamicResolution,
+            "nativeResolution": config.isNativeResolution,
+            "upscalingFilter": qemuScaler(from: config.upscalingFilter).rawValue,
+            "downscalingFilter": qemuScaler(from: config.downscalingFilter).rawValue,
+        ]
+    }
+    
+    private func serializeQemuAdditionalArgument(_ argument: QEMUArgument) -> [AnyHashable: Any] {
+        var serializedArgument: [AnyHashable: Any] = [
+            "argumentString": argument.string
+        ]
+        // Only add fileUrls if it is not nil and contains URLs
+        if let fileUrls = argument.fileUrls, !fileUrls.isEmpty {
+            serializedArgument["fileUrls"] = fileUrls.map({ $0 as AnyHashable })
+        }
+        
+        return serializedArgument
+    }
+    
     private func serializeAppleConfiguration(_ config: UTMAppleConfiguration) -> [AnyHashable : Any] {
         [
             "name": config.information.name,
+            "icon": config.information.iconURL?.deletingPathExtension().lastPathComponent ?? "",
             "notes": config.information.notes ?? "",
             "memory": config.system.memorySize,
             "cpuCores": config.system.cpuCount,
@@ -198,6 +232,7 @@ extension UTMScriptingConfigImpl {
             "drives": config.drives.map({ serializeAppleDriveExisting($0) }),
             "networkInterfaces": config.networks.enumerated().map({ serializeAppleNetwork($1, index: $0) }),
             "serialPorts": config.serials.enumerated().map({ serializeAppleSerial($1, index: $0) }),
+            "displays": config.displays.map({ serializeAppleDisplay($0)}),
         ]
     }
     
@@ -243,6 +278,13 @@ extension UTMScriptingConfigImpl {
         [
             "index": index,
             "interface": appleSerialInterface(from: config.mode).rawValue,
+        ]
+    }
+    
+    private func serializeAppleDisplay(_ config: UTMAppleConfigurationDisplay) -> [AnyHashable : Any] {
+        [
+            "id": config.id.uuidString,
+            "dynamicResolution": config.isDynamicResolution,
         ]
     }
 }
@@ -298,6 +340,13 @@ extension UTMScriptingConfigImpl {
         if let name = record["name"] as? String, !name.isEmpty {
             config.information.name = name
         }
+        if let icon = record["icon"] as? String, !icon.isEmpty {
+            if let url = UTMConfigurationInfo.builtinIcon(named: icon) {
+                config.information.iconURL = url
+            } else {
+                throw ConfigurationError.iconNotFound(icon: icon)
+            }
+        }
         if let notes = record["notes"] as? String, !notes.isEmpty {
             config.information.notes = notes
         }
@@ -337,6 +386,12 @@ extension UTMScriptingConfigImpl {
         }
         if let serialPorts = record["serialPorts"] as? [[AnyHashable : Any]] {
             try updateQemuSerials(from: serialPorts)
+        }
+        if let displays = record["displays"] as? [[AnyHashable : Any]] {
+            try updateQemuDisplays(from: displays)
+        }
+        if let qemuAdditionalArguments = record["qemuAdditionalArguments"] as? [[AnyHashable: Any]] {
+            try updateQemuAdditionalArguments(from: qemuAdditionalArguments)
         }
     }
     
@@ -500,10 +555,74 @@ extension UTMScriptingConfigImpl {
         }
     }
     
+    private func updateQemuDisplays(from records: [[AnyHashable : Any]]) throws {
+        let config = config as! UTMQemuConfiguration
+        try updateElements(&config.displays, with: records, onExisting: updateQemuExistingDisplay, onNew: { record in
+            guard var newDisplay = UTMQemuConfigurationDisplay(forArchitecture: config.system.architecture, target: config.system.target) else {
+                throw ConfigurationError.deviceNotSupported
+            }
+            try updateQemuExistingDisplay(&newDisplay, from: record)
+            return newDisplay
+        })
+    }
+    
+    private func parseQemuScaler(_ value: AEKeyword?) -> QEMUScaler? {
+        guard let value = value, let parsed = UTMScriptingQemuScaler(rawValue: value) else {
+            return Optional.none
+        }
+        switch parsed {
+        case .linear: return .linear
+        case .nearest: return .nearest
+        default: return Optional.none
+        }
+    }
+    
+    private func updateQemuExistingDisplay(_ display: inout UTMQemuConfigurationDisplay, from record: [AnyHashable : Any]) throws {
+        let config = config as! UTMQemuConfiguration
+        if let hardware = record["hardware"] as? String, let hardware = config.system.architecture.displayDeviceType.init(rawValue: hardware) {
+            display.hardware = hardware
+        }
+        if let dynamicResolution = record["dynamicResolution"] as? Bool {
+            display.isDynamicResolution = dynamicResolution
+        }
+        if let nativeResolution = record["nativeResolution"] as? Bool {
+            display.isNativeResolution = nativeResolution
+        }
+        if let upscalingFilter = parseQemuScaler(record["upscalingFilter"] as? AEKeyword) {
+            display.upscalingFilter = upscalingFilter
+        }
+        if let downscalingFilter = parseQemuScaler(record["downscalingFilter"] as? AEKeyword) {
+            display.downscalingFilter = downscalingFilter
+        }
+    }
+    
+    private func updateQemuAdditionalArguments(from records: [[AnyHashable: Any]]) throws {
+        let config = config as! UTMQemuConfiguration
+        let additionalArguments = records.compactMap { record -> QEMUArgument? in
+            guard let argumentString = record["argumentString"] as? String else { return nil }
+            var argument = QEMUArgument(argumentString)
+            // fileUrls are used as required resources by QEMU.
+            if let fileUrls = record["fileUrls"] as? [URL] {
+                argument.fileUrls = fileUrls
+            }
+            return argument
+        }
+        // Update entire additional arguments with new one.
+        config.qemu.additionalArguments = additionalArguments
+    }
+        
+    
     private func updateAppleConfiguration(from record: [AnyHashable : Any]) throws {
         let config = config as! UTMAppleConfiguration
         if let name = record["name"] as? String, !name.isEmpty {
             config.information.name = name
+        }
+        if let icon = record["icon"] as? String, !icon.isEmpty {
+            if let url = UTMConfigurationInfo.builtinIcon(named: icon) {
+                config.information.iconURL = url
+            } else {
+                throw ConfigurationError.iconNotFound(icon: icon)
+            }
         }
         if let notes = record["notes"] as? String, !notes.isEmpty {
             config.information.notes = notes
@@ -525,6 +644,9 @@ extension UTMScriptingConfigImpl {
         }
         if let serialPorts = record["serialPorts"] as? [[AnyHashable : Any]] {
             try updateAppleSerials(from: serialPorts)
+        }
+        if let displays = record["displays"] as? [[AnyHashable : Any]] {
+            try updateAppleDisplays(from: displays)
         }
     }
     
@@ -622,11 +744,26 @@ extension UTMScriptingConfigImpl {
         }
     }
     
+    private func updateAppleDisplays(from records: [[AnyHashable : Any]]) throws {
+        let config = config as! UTMAppleConfiguration
+        try updateElements(&config.displays, with: records, onExisting: updateAppleExistingDisplay, onNew: { record in
+            var newDisplay = UTMAppleConfigurationDisplay()
+            try updateAppleExistingDisplay(&newDisplay, from: record)
+            return newDisplay
+        })
+    }
+    
+    private func updateAppleExistingDisplay(_ display: inout UTMAppleConfigurationDisplay, from record: [AnyHashable : Any]) throws {
+        if let dynamicResolution = record["dynamicResolution"] as? Bool {
+            display.isDynamicResolution = dynamicResolution
+        }
+    }
     enum ConfigurationError: Error, LocalizedError {
         case identifierNotFound(id: any Hashable)
         case invalidDriveDescription
         case indexNotFound(index: Int)
         case deviceNotSupported
+        case iconNotFound(icon: String)
         
         var errorDescription: String? {
             switch self {
@@ -634,6 +771,7 @@ extension UTMScriptingConfigImpl {
             case .invalidDriveDescription: return NSLocalizedString("Drive description is invalid.", comment: "UTMScriptingConfigImpl")
             case .indexNotFound(let index): return String.localizedStringWithFormat(NSLocalizedString("Index %lld cannot be found.", comment: "UTMScriptingConfigImpl"), index)
             case .deviceNotSupported: return NSLocalizedString("This device is not supported by the target.", comment: "UTMScriptingConfigImpl")
+            case .iconNotFound(let icon): return String.localizedStringWithFormat(NSLocalizedString("The icon named '%@' cannot be found in the built-in icons.", comment: "UTMScriptingConfigImpl"), icon)
             }
         }
     }

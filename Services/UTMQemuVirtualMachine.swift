@@ -129,7 +129,8 @@ final class UTMQemuVirtualMachine: UTMSpiceVirtualMachine {
 
     private let qemuVM = QEMUVirtualMachine()
     
-    private var system: UTMQemuSystem? {
+    /// QEMU Process interface
+    var system: UTMQemuSystem? {
         get async {
             await qemuVM.launcher as? UTMQemuSystem
         }
@@ -154,6 +155,9 @@ final class UTMQemuVirtualMachine: UTMSpiceVirtualMachine {
     private var swtpm: UTMSWTPM?
     
     private var changeCursorRequestInProgress: Bool = false
+
+    private static var resourceCacheOperationQueue = DispatchQueue(label: "Resource Cache Operation")
+    private static var isResourceCacheUpdated = false
 
     #if WITH_SERVER
     @Setting("ServerPort") private var serverPort: Int = 0
@@ -275,6 +279,10 @@ extension UTMQemuVirtualMachine {
         guard await isSupported else {
             throw UTMQemuVirtualMachineError.emulationNotSupported
         }
+
+        // create QEMU resource cache if needed
+        try await ensureQemuResourceCacheUpToDate()
+
         let hasDebugLog = await config.qemu.hasDebugLog
         // start logging
         if hasDebugLog, let debugLogURL = await config.qemu.debugLogURL {
@@ -437,6 +445,11 @@ extension UTMQemuVirtualMachine {
             self.spicePort = spicePort
         }
         #endif
+
+        // update timestamp
+        if !isRunningAsDisposible {
+            try? updateLastModified()
+        }
     }
     
     func start(options: UTMVirtualMachineStartOptions = []) async throws {
@@ -549,6 +562,7 @@ extension UTMQemuVirtualMachine {
         if result.localizedCaseInsensitiveContains("Error") {
             throw UTMQemuVirtualMachineError.qemuError(result)
         }
+        try? updateLastModified()
     }
     
     func saveSnapshot(name: String? = nil) async throws {
@@ -580,6 +594,7 @@ extension UTMQemuVirtualMachine {
             if result.localizedCaseInsensitiveContains("Error") {
                 throw UTMQemuVirtualMachineError.qemuError(result)
             }
+            try? updateLastModified()
         }
     }
     
@@ -784,9 +799,11 @@ extension UTMQemuVirtualMachine {
     }
 
     private func changeMedium(_ drive: UTMQemuConfigurationDrive, to url: URL, isAccessOnly: Bool) async throws {
-        _ = url.startAccessingSecurityScopedResource()
+        let isScopedAccess = url.startAccessingSecurityScopedResource()
         defer {
-            url.stopAccessingSecurityScopedResource()
+            if isScopedAccess {
+                url.stopAccessingSecurityScopedResource()
+            }
         }
         let tempBookmark = try url.bookmarkData()
         try await eject(drive, isForced: true)
@@ -803,7 +820,7 @@ extension UTMQemuVirtualMachine {
         }
         await registryEntry.updateExternalDriveRemoteBookmark(bookmark, forId: drive.id)
         if let qemu = await monitor, qemu.isConnected && !isAccessOnly {
-            try qemu.changeMedium(forDrive: "drive\(drive.id)", path: path)
+            try qemu.changeMedium(forDrive: "drive\(drive.id)", path: path, locking: false)
         }
     }
 
@@ -875,6 +892,93 @@ extension UTMQemuVirtualMachine {
         return dict
     }
 }
+
+// MARK: - Caching QEMU resources
+extension UTMQemuVirtualMachine {
+    private func _ensureQemuResourceCacheUpToDate() throws {
+        let fm = FileManager.default
+        let qemuResourceUrl = Bundle.main.url(forResource: "qemu", withExtension: nil)!
+        let cacheUrl = try fm.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        let qemuCacheUrl = cacheUrl.appendingPathComponent("qemu", isDirectory: true)
+
+        guard fm.fileExists(atPath: qemuCacheUrl.path) else {
+            try fm.copyItem(at: qemuResourceUrl, to: qemuCacheUrl)
+            return
+        }
+
+        logger.info("Updating QEMU resource cache...")
+        // first visit all the subdirectories and create them if needed
+        let subdirectoryEnumerator = fm.enumerator(at: qemuResourceUrl, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles, .producesRelativePathURLs, .includesDirectoriesPostOrder])!
+        for case let directoryURL as URL in subdirectoryEnumerator {
+            guard subdirectoryEnumerator.isEnumeratingDirectoryPostOrder else {
+                continue
+            }
+            let relativePath = directoryURL.relativePath
+            let destUrl = qemuCacheUrl.appendingPathComponent(relativePath)
+            var isDirectory: ObjCBool = false
+            if fm.fileExists(atPath: destUrl.path, isDirectory: &isDirectory) {
+                // old file is now a directory
+                if !isDirectory.boolValue {
+                    logger.info("Removing file \(destUrl.path)")
+                    try fm.removeItem(at: destUrl)
+                } else {
+                    continue
+                }
+            }
+            logger.info("Creating directory \(destUrl.path)")
+            try fm.createDirectory(at: destUrl, withIntermediateDirectories: true)
+        }
+        // next check all the files
+        let fileEnumerator = fm.enumerator(at: qemuResourceUrl, includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey, .isDirectoryKey], options: [.skipsHiddenFiles, .producesRelativePathURLs])!
+        for case let sourceUrl as URL in fileEnumerator {
+            let relativePath = sourceUrl.relativePath
+            let sourceResourceValues = try sourceUrl.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey, .isDirectoryKey])
+            guard !sourceResourceValues.isDirectory! else {
+                continue
+            }
+            let destUrl = qemuCacheUrl.appendingPathComponent(relativePath)
+            if fm.fileExists(atPath: destUrl.path) {
+                // first do a quick comparsion with resource keys
+                let destResourceValues = try destUrl.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey, .isDirectoryKey])
+                // old directory is now a file
+                if destResourceValues.isDirectory! {
+                    logger.info("Removing directory \(destUrl.path)")
+                    try fm.removeItem(at: destUrl)
+                } else if destResourceValues.contentModificationDate == sourceResourceValues.contentModificationDate && destResourceValues.fileSize == sourceResourceValues.fileSize {
+                    // assume the file is the same
+                    continue
+                } else {
+                    logger.info("Removing file \(destUrl.path)")
+                    try fm.removeItem(at: destUrl)
+                }
+            }
+            // if we are here, the file has changed
+            logger.info("Copying file \(sourceUrl.path) to \(destUrl.path)")
+            try fm.copyItem(at: sourceUrl, to: destUrl)
+        }
+    }
+
+    func ensureQemuResourceCacheUpToDate() async throws {
+        guard !Self.isResourceCacheUpdated else {
+            return
+        }
+        try await withCheckedThrowingContinuation { continuation in
+            Self.resourceCacheOperationQueue.async { [weak self] in
+                do {
+                    if !Self.isResourceCacheUpdated {
+                        try self?._ensureQemuResourceCacheUpToDate()
+                        Self.isResourceCacheUpdated = true
+                    }
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Errors
 
 enum UTMQemuVirtualMachineError: Error {
     case failedToAccessShortcut

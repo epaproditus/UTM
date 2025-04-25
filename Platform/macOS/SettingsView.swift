@@ -136,6 +136,7 @@ struct InputSettingsView: View {
     @AppStorage("IsCapsLockKey") var isCapsLockKey = false
     @AppStorage("IsNumLockForced") var isNumLockForced = false
     @AppStorage("InvertScroll") var isInvertScroll = false
+    @AppStorage("HandleInitialClick") var isHandleInitialClick = false
     @AppStorage("NoUsbPrompt") var isNoUsbPrompt = false
     
     var body: some View {
@@ -162,6 +163,9 @@ struct InputSettingsView: View {
                 Toggle(isOn: $isInvertScroll, label: {
                     Text("Invert scrolling")
                 }).help("If enabled, scroll wheel input will be inverted.")
+                Toggle(isOn: $isHandleInitialClick) {
+                    Text("Handle input on initial click")
+                }.help("If enabled, when the VM is out of focus, the first click will be handled by the VM. Otherwise, the first click will only bring the window into focus.")
             }
             
             Section(header: Text("QEMU Keyboard")) {
@@ -223,8 +227,11 @@ struct ServerSettingsView: View {
                     .multilineTextAlignment(.trailing)
                     .help("Specify a port number to listen on. This is required if external clients are permitted.")
                     .onChange(of: serverPort) { newValue in
-                        if serverPort == 0 {
+                        if newValue == 0 {
                             isServerExternal = false
+                        }
+                        if newValue < 0 || newValue >= UInt16.max {
+                            serverPort = defaultPort
                         }
                     }
             }

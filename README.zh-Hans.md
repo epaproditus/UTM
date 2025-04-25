@@ -1,5 +1,5 @@
 #  UTM
-[![Build](https://github.com/utmapp/UTM/workflows/Build/badge.svg?branch=master&event=push)][1]
+[![Build](https://github.com/utmapp/UTM/workflows/Build/badge.svg?branch=main&event=push)][1]
 
 > 发明一台可用于计算任何可计算序列的机器是可行的。
 -- <cite>艾伦·图灵（Alan Turing）, 1936 年</cite>
@@ -20,7 +20,7 @@ UTM 是一个功能齐全的系统模拟器和虚拟机主机，适用于 iOS �
 * 文本终端模式
 * USB 设备
 * 使用 QEMU TCG 进行基于 JIT 的加速
-* 采用了最新和最好的 API，从零开始设计前端，支持 macOS 11+ 和 iOS 11+
+* 采用了最新、最好的 API，从零开始设计前端，支持 macOS 11+ 和 iOS 11+
 * 直接从你的设备上创建、管理和运行虚拟机
 
 ## macOS 的附加功能
